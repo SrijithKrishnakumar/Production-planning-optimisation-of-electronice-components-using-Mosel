@@ -1,0 +1,244 @@
+model "Production_Planning_With_Overtime"
+uses "mmxprs"
+
+declarations
+    NT = 6    !We are planning for 6 months
+    MONTHS = 1..NT
+    PRODS = 1..4    !number of products
+    
+    DEM: array(PRODS, MONTHS) of integer
+    CPROD: array(PRODS) of real  !production cost
+    CSTOCK: array(PRODS) of real !storage cost
+    CADD, CRED: real            ! cost per unit when increasing / decreasing production
+    ISTOCK, FSTOCK: array(PRODS) of integer
+    
+    ! New declarations for overtime
+    BASE_CAPACITY: real              ! Base production capacity per month
+    OVERTIME_CAPACITY: real          ! Maximum overtime capacity per month
+    OVERTIME_COST_EXTRA: real        ! Extra cost per unit for overtime production
+    
+    ! Decision variables
+    produce_base: array(PRODS, MONTHS) of mpvar      ! Base production
+    produce_overtime: array(PRODS, MONTHS) of mpvar  ! Overtime production
+    produce: array(PRODS, MONTHS) of mpvar           ! Total production
+    store: array(PRODS, MONTHS) of mpvar
+    reduce: array(MONTHS) of mpvar
+    add: array(MONTHS) of mpvar
+end-declarations
+
+! Data initialization - Demands
+DEM(1,1) := 1500; DEM(1,2) := 3000; DEM(1,3) := 2000
+DEM(1,4) := 4000; DEM(1,5) := 2000; DEM(1,6) := 2500
+
+DEM(2,1) := 1300; DEM(2,2) := 800; DEM(2,3) := 800
+DEM(2,4) := 1000; DEM(2,5) := 1100; DEM(2,6) := 900
+
+DEM(3,1) := 2200; DEM(3,2) := 1500; DEM(3,3) := 2900
+DEM(3,4) := 1800; DEM(3,5) := 1200; DEM(3,6) := 2100
+
+DEM(4,1) := 1400; DEM(4,2) := 1600; DEM(4,3) := 1500
+DEM(4,4) := 1000; DEM(4,5) := 1100; DEM(4,6) := 1200
+
+! Cost data
+CPROD(1) := 20; CPROD(2) := 25; CPROD(3) := 10; CPROD(4) := 15
+CSTOCK(1) := 0.4; CSTOCK(2) := 0.5; CSTOCK(3) := 0.3; CSTOCK(4) := 0.3
+CADD := 1.0
+CRED := 0.5
+
+! Stock level data
+ISTOCK(1) := 10; ISTOCK(2) := 0; ISTOCK(3) := 0; ISTOCK(4) := 0
+FSTOCK(1) := 50; FSTOCK(2) := 10; FSTOCK(3) := 10; FSTOCK(4) := 10
+
+! Our test case parameters
+BASE_CAPACITY := 6000
+OVERTIME_CAPACITY := 1500
+OVERTIME_COST_EXTRA := 7.0
+
+! Defining total production as sum of base and overtime
+forall(p in PRODS, t in MONTHS) do
+    produce(p,t) = produce_base(p,t) + produce_overtime(p,t)
+end-do
+
+! Objective function with overtime costs
+Cost := 
+    ! Regular production costs
+    sum(p in PRODS, t in MONTHS) (CPROD(p)*produce_base(p,t)) +
+    ! Overtime production costs (regular cost + extra overtime cost)
+    sum(p in PRODS, t in MONTHS) ((CPROD(p) + OVERTIME_COST_EXTRA)*produce_overtime(p,t)) +
+    ! Storage costs
+    sum(p in PRODS, t in MONTHS) (CSTOCK(p)*store(p,t)) +
+    ! Production change costs
+    sum(t in 2..NT) (CRED*reduce(t) + CADD*add(t))
+
+! Capacity constraints
+! Base capacity constraint: total base production cannot exceed BASE_CAPACITY per month
+forall(t in MONTHS) do
+    sum(p in PRODS) produce_base(p,t) <= BASE_CAPACITY
+end-do
+
+! Overtime capacity constraint: total overtime production cannot exceed OVERTIME_CAPACITY per month
+forall(t in MONTHS) do
+    sum(p in PRODS) produce_overtime(p,t) <= OVERTIME_CAPACITY
+end-do
+
+! Stock balance constraints
+forall(p in PRODS, t in MONTHS) do
+    if t = 1 then
+        store(p,t) = ISTOCK(p) + produce(p,t) - DEM(p,t)
+    else
+        store(p,t) = store(p,t-1) + produce(p,t) - DEM(p,t)
+    end-if
+end-do
+
+! Changes to production level (based on total production)
+forall(t in 2..NT) do
+    sum(p in PRODS) (produce(p,t) - produce(p,t-1)) = add(t) - reduce(t)
+end-do
+
+! Final stock requirements
+forall(p in PRODS) 
+    store(p, NT) >= FSTOCK(p)
+
+! Non-negativity constraints
+forall(t in 2..NT) do
+    reduce(t) >= 0
+    add(t) >= 0
+end-do
+
+forall(p in PRODS, t in MONTHS) do
+    produce_base(p,t) >= 0
+    produce_overtime(p,t) >= 0
+    store(p,t) >= 0
+end-do
+
+! Solve
+minimize(Cost)
+
+! Display results
+writeln("\n========================================")
+writeln("PRODUCTION PLANNING WITH OVERTIME")
+writeln("========================================")
+writeln("\nTest Case Parameters:")
+writeln("Base Capacity per month: ", BASE_CAPACITY, " units")
+writeln("Overtime Capacity per month: ", OVERTIME_CAPACITY, " units")
+writeln("Overtime Extra Cost: EUR ", OVERTIME_COST_EXTRA, "/unit")
+writeln
+
+writeln("Production Plan - BASE PRODUCTION (units):")
+writeln("Product    Month 1  Month 2  Month 3  Month 4  Month 5  Month 6")
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("X43-M1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_base(1,t)), 9, 0))
+writeln
+write("X43-M2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_base(2,t)), 9, 0))
+writeln
+write("Y54-N1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_base(3,t)), 9, 0))
+writeln
+write("Y54-N2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_base(4,t)), 9, 0))
+writeln
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("TOTAL   ")
+forall(t in MONTHS) write(strfmt(sum(p in PRODS) getsol(produce_base(p,t)), 9, 0))
+writeln
+
+writeln("\nProduction Plan - OVERTIME PRODUCTION (units):")
+writeln("Product    Month 1  Month 2  Month 3  Month 4  Month 5  Month 6")
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("X43-M1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_overtime(1,t)), 9, 0))
+writeln
+write("X43-M2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_overtime(2,t)), 9, 0))
+writeln
+write("Y54-N1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_overtime(3,t)), 9, 0))
+writeln
+write("Y54-N2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce_overtime(4,t)), 9, 0))
+writeln
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("TOTAL   ")
+forall(t in MONTHS) write(strfmt(sum(p in PRODS) getsol(produce_overtime(p,t)), 9, 0))
+writeln
+
+writeln("\nProduction Plan - TOTAL PRODUCTION (units):")
+writeln("Product    Month 1  Month 2  Month 3  Month 4  Month 5  Month 6")
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("X43-M1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce(1,t)), 9, 0))
+writeln
+write("X43-M2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce(2,t)), 9, 0))
+writeln
+write("Y54-N1  ")
+forall(t in MONTHS) write(strfmt(getsol(produce(3,t)), 9, 0))
+writeln
+write("Y54-N2  ")
+forall(t in MONTHS) write(strfmt(getsol(produce(4,t)), 9, 0))
+writeln
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("TOTAL   ")
+forall(t in MONTHS) write(strfmt(sum(p in PRODS) getsol(produce(p,t)), 9, 0))
+writeln
+
+writeln("\nCapacity Utilization:")
+writeln("Month   Base Used  Base Cap  Overtime  OT Cap   Total")
+writeln("-----   ---------  --------  --------  ------   -----")
+forall(t in MONTHS) do
+    base_used := sum(p in PRODS) getsol(produce_base(p,t))
+    ot_used := sum(p in PRODS) getsol(produce_overtime(p,t))
+    writeln("  ", t, "     ", strfmt(base_used, 7, 0), "    ", 
+            strfmt(BASE_CAPACITY, 6, 0), "    ", 
+            strfmt(ot_used, 6, 0), "    ",
+            strfmt(OVERTIME_CAPACITY, 4, 0), "   ",
+            strfmt(base_used + ot_used, 5, 0))
+end-do
+
+writeln("\nStock Levels at End of Each Month (units):")
+writeln("Product    Month 1  Month 2  Month 3  Month 4  Month 5  Month 6")
+writeln("-------    -------  -------  -------  -------  -------  -------")
+write("X43-M1  ")
+forall(t in MONTHS) write(strfmt(getsol(store(1,t)), 9, 0))
+writeln
+write("X43-M2  ")
+forall(t in MONTHS) write(strfmt(getsol(store(2,t)), 9, 0))
+writeln
+write("Y54-N1  ")
+forall(t in MONTHS) write(strfmt(getsol(store(3,t)), 9, 0))
+writeln
+write("Y54-N2  ")
+forall(t in MONTHS) write(strfmt(getsol(store(4,t)), 9, 0))
+writeln
+
+writeln("\nProduction Level Changes:")
+writeln("Month    Increase  Decrease")
+writeln("-----    --------  --------")
+forall(t in 2..NT) do
+    writeln("  ", t, "      ", strfmt(getsol(add(t)), 6, 0), "    ", 
+            strfmt(getsol(reduce(t)), 6, 0))
+end-do
+
+writeln("\nCost Breakdown:")
+prod_cost_base := sum(p in PRODS, t in MONTHS) (CPROD(p)*getsol(produce_base(p,t)))
+prod_cost_overtime := sum(p in PRODS, t in MONTHS) ((CPROD(p) + OVERTIME_COST_EXTRA)*getsol(produce_overtime(p,t)))
+stor_cost := sum(p in PRODS, t in MONTHS) (CSTOCK(p)*getsol(store(p,t)))
+chng_cost := sum(t in 2..NT) (CRED*getsol(reduce(t)) + CADD*getsol(add(t)))
+
+writeln("Base Production cost:     EUR ", strfmt(prod_cost_base, 10, 2))
+writeln("Overtime Production cost: EUR ", strfmt(prod_cost_overtime, 10, 2))
+writeln("Total Production cost:    EUR ", strfmt(prod_cost_base + prod_cost_overtime, 10, 2))
+writeln("Storage cost:             EUR ", strfmt(stor_cost, 10, 2))
+writeln("Change cost:              EUR ", strfmt(chng_cost, 10, 2))
+writeln("========================================")
+writeln("TOTAL COST:               EUR ", strfmt(prod_cost_base + prod_cost_overtime + stor_cost + chng_cost, 10, 2))
+writeln("========================================")
+
+writeln("\nComparison with Base Case:")
+writeln("Base Case Total Cost: EUR 683,929")
+writeln("Test Case Total Cost: EUR ", strfmt(prod_cost_base + prod_cost_overtime + stor_cost + chng_cost, 10, 2))
+writeln("Difference:           EUR ", strfmt((prod_cost_base + prod_cost_overtime + stor_cost + chng_cost) - 683929, 10, 2))
+
+end-model
